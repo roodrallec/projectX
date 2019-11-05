@@ -3,4 +3,4 @@
 data/*
 models/*
 node_modules
-
+*.pict

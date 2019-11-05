@@ -157,7 +157,7 @@
     let withBoxes = true
     let PIX2PIX_SIZE = 256
     let once = true
-    const pix2pix = ml5.pix2pix("TEST_MODEL.pict", modelLoaded);
+    const pix2pix = ml5.pix2pix("youtuber.pict", modelLoaded);
 
     function onChangeHideBoundingBoxes(e) {
       withBoxes = !$(e.target).prop('checked')
@@ -175,6 +175,11 @@
       var canvas = $('#pix2pix').get(0)
       canvas.setAttribute('width', 2*PIX2PIX_SIZE);
       canvas.setAttribute('height', PIX2PIX_SIZE);
+
+      var overlay = $("#overlay").get(0);
+      overlay.setAttribute('width', PIX2PIX_SIZE);
+      overlay.setAttribute('height', PIX2PIX_SIZE);
+
       let ctx = canvas.getContext('2d');
       ctx.fillStyle = 'black';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -202,11 +207,13 @@
       ctx.drawImage(videoEl, PIX2PIX_SIZE, 0)
       pix2pix.transfer(canvas, function(err, result) {
         if (err) console.log(err);
+
         var image = new Image();
         image.src = result.src;
-        var overlay = $("#overlay").get(0);
-        var ctx = overlay.getContext("2d");
-        ctx.drawImage(image, 0, 0);
+
+        var overlayCtx = overlay.getContext("2d");
+        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+        overlayCtx.drawImage(image, 0, 0);
       });
     }
 
