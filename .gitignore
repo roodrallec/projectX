@@ -1,0 +1,6 @@
+.venv
+.vscode
+data/*
+models/*
+node_modules
+
