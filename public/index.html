@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html>
+
 <head>
   <script src="https://unpkg.com/ml5@0.4.1/dist/ml5.min.js" type="text/javascript"></script>
   <script src="js/faceDetectionControls.js"></script>
@@ -10,6 +11,7 @@
   <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/0.100.2/js/materialize.min.js"></script>
 </head>
+
 <body>
   <div class="center-content page-container">
 
@@ -70,16 +72,10 @@
           <label for="minConfidence">Min Confidence:</label>
           <input disabled value="0.5" id="minConfidence" type="text" class="bold">
         </div>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onDecreaseMinConfidence()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onDecreaseMinConfidence()">
           <i class="material-icons left">-</i>
         </button>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onIncreaseMinConfidence()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onIncreaseMinConfidence()">
           <i class="material-icons left">+</i>
         </button>
       </div>
@@ -106,16 +102,10 @@
           <label for="scoreThreshold">Score Threshold:</label>
           <input disabled value="0.5" id="scoreThreshold" type="text" class="bold">
         </div>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onDecreaseScoreThreshold()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onDecreaseScoreThreshold()">
           <i class="material-icons left">-</i>
         </button>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onIncreaseScoreThreshold()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onIncreaseScoreThreshold()">
           <i class="material-icons left">+</i>
         </button>
       </div>
@@ -129,134 +119,131 @@
           <label for="minFaceSize">Minimum Face Size:</label>
           <input disabled value="20" id="minFaceSize" type="text" class="bold">
         </div>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onDecreaseMinFaceSize()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onDecreaseMinFaceSize()">
           <i class="material-icons left">-</i>
         </button>
-        <button
-          class="waves-effect waves-light btn"
-          onclick="onIncreaseMinFaceSize()"
-        >
+        <button class="waves-effect waves-light btn" onclick="onIncreaseMinFaceSize()">
           <i class="material-icons left">+</i>
         </button>
       </div>
     </span>
     <!-- mtcnn_controls -->
 
-  </body>
-
-  <script>
-    let forwardTimes = []
-    let withBoxes = true
-    let PIX2PIX_SIZE = 256
-    let once = true
-    const pix2pix = ml5.pix2pix("youtuber.pict", modelLoaded);
-
-    function onChangeHideBoundingBoxes(e) {
-      withBoxes = !$(e.target).prop('checked')
-    }
-
-    function updateTimeStats(timeInMs) {
-      forwardTimes = [timeInMs].concat(forwardTimes).slice(0, 30)
-      const avgTimeInMs = forwardTimes.reduce((total, t) => total + t) / forwardTimes.length
-      $('#time').val(`${Math.round(avgTimeInMs)} ms`)
-      $('#fps').val(`${faceapi.round(1000 / avgTimeInMs)}`)
-    }
-
-    function drawPix2Pix(image, faceLandmarks) {
-      // Create Left Image
-      var canvas = $('#pix2pix').get(0)
-      canvas.setAttribute('width', 2*PIX2PIX_SIZE);
-      canvas.setAttribute('height', PIX2PIX_SIZE);
-
-      var overlay = $("#overlay").get(0);
-      overlay.setAttribute('width', PIX2PIX_SIZE);
-      overlay.setAttribute('height', PIX2PIX_SIZE);
-
-      let ctx = canvas.getContext('2d');
-      ctx.fillStyle = 'black';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      faceLandmarks = faceapi.resizeResults(faceLandmarks, {
-        width: PIX2PIX_SIZE,
-        height: PIX2PIX_SIZE
-      })
-      var faceLandmarksArray = Array.isArray(faceLandmarks) ? faceLandmarks : [faceLandmarks];
-      faceLandmarksArray.forEach(function (f) {
-        var landmarks = f instanceof faceapi.FaceLandmarks
-          ? f
-          : (faceapi.isWithFaceLandmarks(f) ? f.landmarks : undefined);
-        if (!landmarks) {
-          throw new Error('drawFaceLandmarks - expected faceExpressions to be FaceLandmarks | WithFaceLandmarks<WithFaceDetection<{}>> or array thereof');
-        }
-        new faceapi.draw.DrawFaceLandmarks(landmarks, {
-          drawLines: true,
-          lineWidth: 3,
-          lineColor: 'white',
-          drawPoints: false
-        }).draw(canvas);
-      });
-
-      // Create Right Image
-      ctx.drawImage(videoEl, PIX2PIX_SIZE, 0)
-      pix2pix.transfer(canvas, function(err, result) {
-        if (err) console.log(err);
-
-        var image = new Image();
-        image.src = result.src;
-
-        var overlayCtx = overlay.getContext("2d");
-        overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
-        overlayCtx.drawImage(image, 0, 0);
-      });
-    }
-
-    async function onPlay() {
-      const videoEl = getVideoFrame()
-
-      if(videoEl.paused || videoEl.ended || !isFaceDetectionModelLoaded())
-        return setTimeout(() => onPlay())
-
-      const options = getFaceDetectorOptions()
-      const ts = Date.now()
-      const result = await faceapi.detectSingleFace(videoEl, options).withFaceLandmarks()
-
-      updateTimeStats(Date.now() - ts)
-
-      if (result) drawPix2Pix(videoEl, result)
-
-      setTimeout(() => onPlay())
-    }
-
-    function modelLoaded() {
-      console.log('loaded test pix2pix');
-    }
-
-    async function run() {
-      // load face detection and face landmark models
-      await changeFaceDetector(TINY_FACE_DETECTOR)
-      await faceapi.loadFaceLandmarkModel('/')
-      // try to access users webcam and stream the images
-      // to the video element
-      const stream = await navigator.mediaDevices.getUserMedia({ video: {
-        width: PIX2PIX_SIZE,
-        height: PIX2PIX_SIZE
-      } })
-      videoEl = getVideoFrame()
-      videoEl.srcObject = stream
-    }
-
-    function getVideoFrame() {
-      return $('#inputVideo').get(0)
-    }
-
-    function updateResults() {}
-
-    $(document).ready(function() {
-      initFaceDetectionControls()
-      run()
-    })
-  </script>
 </body>
+
+<script>
+  let forwardTimes = []
+  let withBoxes = true
+  let PIX2PIX_SIZE = 256
+  let once = true
+  const pix2pix = ml5.pix2pix("youtuber.pict", modelLoaded);
+
+  function onChangeHideBoundingBoxes(e) {
+    withBoxes = !$(e.target).prop('checked')
+  }
+
+  function updateTimeStats(timeInMs) {
+    forwardTimes = [timeInMs].concat(forwardTimes).slice(0, 30)
+    const avgTimeInMs = forwardTimes.reduce((total, t) => total + t) / forwardTimes.length
+    $('#time').val(`${Math.round(avgTimeInMs)} ms`)
+    $('#fps').val(`${faceapi.round(1000 / avgTimeInMs)}`)
+  }
+
+  function drawPix2Pix(image, faceLandmarks) {
+    // Create Left Image
+    var canvas = $('#pix2pix').get(0)
+    canvas.setAttribute('width', 2 * PIX2PIX_SIZE);
+    canvas.setAttribute('height', PIX2PIX_SIZE);
+
+    var overlay = $("#overlay").get(0);
+    overlay.setAttribute('width', PIX2PIX_SIZE);
+    overlay.setAttribute('height', PIX2PIX_SIZE);
+
+    let ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    faceLandmarks = faceapi.resizeResults(faceLandmarks, {
+      width: PIX2PIX_SIZE,
+      height: PIX2PIX_SIZE
+    })
+    var faceLandmarksArray = Array.isArray(faceLandmarks) ? faceLandmarks : [faceLandmarks];
+    faceLandmarksArray.forEach(function (f) {
+      var landmarks = f instanceof faceapi.FaceLandmarks
+        ? f
+        : (faceapi.isWithFaceLandmarks(f) ? f.landmarks : undefined);
+      if (!landmarks) {
+        throw new Error('drawFaceLandmarks - expected faceExpressions to be FaceLandmarks | WithFaceLandmarks<WithFaceDetection<{}>> or array thereof');
+      }
+      new faceapi.draw.DrawFaceLandmarks(landmarks, {
+        drawLines: true,
+        lineWidth: 3,
+        lineColor: 'white',
+        drawPoints: false
+      }).draw(canvas);
+    });
+
+    // Create Right Image
+    ctx.drawImage(videoEl, PIX2PIX_SIZE, 0)
+    pix2pix.transfer(canvas, function (err, result) {
+      if (err) console.log(err);
+
+      var image = new Image();
+      image.src = result.src;
+
+      var overlayCtx = overlay.getContext("2d");
+      overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+      overlayCtx.drawImage(image, 0, 0);
+    });
+  }
+
+  async function onPlay() {
+    const videoEl = getVideoFrame()
+
+    if (videoEl.paused || videoEl.ended || !isFaceDetectionModelLoaded())
+      return setTimeout(() => onPlay())
+
+    const options = getFaceDetectorOptions()
+    const ts = Date.now()
+    const result = await faceapi.detectSingleFace(videoEl, options).withFaceLandmarks()
+
+    updateTimeStats(Date.now() - ts)
+
+    if (result) drawPix2Pix(videoEl, result)
+
+    setTimeout(() => onPlay())
+  }
+
+  function modelLoaded() {
+    console.log('loaded test pix2pix');
+  }
+
+  async function run() {
+    // load face detection and face landmark models
+    await changeFaceDetector(TINY_FACE_DETECTOR)
+    await faceapi.loadFaceLandmarkModel('/')
+    // try to access users webcam and stream the images
+    // to the video element
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        width: PIX2PIX_SIZE,
+        height: PIX2PIX_SIZE
+      }
+    })
+    videoEl = getVideoFrame()
+    videoEl.srcObject = stream
+  }
+
+  function getVideoFrame() {
+    return $('#inputVideo').get(0)
+  }
+
+  function updateResults() { }
+
+  $(document).ready(function () {
+    initFaceDetectionControls()
+    run()
+  })
+</script>
+</body>
+
 </html>

@@ -1,0 +1,13 @@
+<html>
+    <head></head>
+    <body>
+        <video id="outputVideo" playsinline="" autoplay="" muted=""></video>
+        <script>
+            console.log('test html script');
+            const outputVid = document.querySelector('#outputVideo');
+            navigator.mediaDevices.getUserMedia({  video: true }).then((stream) => {
+                outputVid.srcObject = stream
+            });
+        </script>
+    </body>
+</html>
