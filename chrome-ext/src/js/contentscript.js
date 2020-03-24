@@ -2,24 +2,32 @@ var docEl = (document.head||document.documentElement);
 
 var div = document.createElement('div');
 div.innerHTML = '<video id="inputVideo" autoplay hidden></video>';
-div.innerHTML += '<canvas id="drawCanvas" width="512" height="512" hidden></canvas>';
+div.innerHTML += '<canvas id="outCanvas" hidden></canvas>';
 docEl.appendChild(div);
 
 var getUserMediaOverload = document.createElement('script');
 getUserMediaOverload.textContent = "\
-var FPS; \
+var FPS;\
+var VIDEO_WIDTH;\
+var VIDEO_HEIGHT;\
+var PIX2PIX_SIZE = 256;\
+var tinyLmPath = '" + chrome.extension.getURL('src/ml-models/tiny_lm.json') + "';\
+var tinyDetPath = '" + chrome.extension.getURL('src/ml-models/tiny_det.json') + "';\
+var pix2pixPath = '" + chrome.extension.getURL('src/ml-models/pix2pix.pict') + "';\
 const inputVid = document.querySelector('#inputVideo');\
-const canvas = document.querySelector('#drawCanvas');\
-const canvasStream = canvas.captureStream();\
+const outCanvas = document.querySelector('#outCanvas');\
+outCanvas.height = PIX2PIX_SIZE; \
+outCanvas.width = PIX2PIX_SIZE; \
+const canvasStream = outCanvas.captureStream();\
 const getUserMedia = navigator.mediaDevices.getUserMedia;\
 navigator.mediaDevices.getUserMedia({  video: true }).then((stream) => {\
     const videoTracks = stream.getVideoTracks();\
     if (!videoTracks || !videoTracks.length) {\
       return;\
     } \
-    canvas.height = videoTracks[0].getSettings().height; \
-    canvas.width = stream.getVideoTracks()[0].getSettings().width; \
     FPS = stream.getVideoTracks()[0].getSettings().frameRate; \
+    VIDEO_WIDTH = stream.getVideoTracks()[0].getSettings().height; \
+    VIDEO_HEIGHT = stream.getVideoTracks()[0].getSettings().width; \
     inputVid.srcObject = stream; \
   });\
   navigator.mediaDevices.getUserMedia = (args) => {\
@@ -49,6 +57,7 @@ function inject(scripts) {
 }
 
 inject([
-    scriptFromFile("face-api.min.js"),
-    scriptFromFile("vid-processor.js")
+  scriptFromFile("lib/face-api.min.js"),
+  scriptFromFile("lib/ml5.min.js"),
+  scriptFromFile("src/js/vid-processor.js")
 ]);
