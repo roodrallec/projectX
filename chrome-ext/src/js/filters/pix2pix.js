@@ -1,22 +1,37 @@
 console.log('Video processor');
 
 // Pix2pix
-const drawCanvas = document.createElement('canvas');
-drawCanvas.height = PIX2PIX_SIZE;
-drawCanvas.width = 2*PIX2PIX_SIZE;
+// const drawCanvas = document.createElement('canvas');
+// drawCanvas.height = PIX2PIX_SIZE;
+// drawCanvas.width = 2*PIX2PIX_SIZE;
+// var pix2pixPath = chrome.extension.getURL('src/ml-models/pix2pix.pict');
+// var PIX2PIX_SIZE = 256;
+// outCanvas.height = PIX2PIX_SIZE;
+// outCanvas.width = PIX2PIX_SIZE;
+// const pix2pix = ml5.pix2pix(pix2pixPath, modelLoaded);
+// function modelLoaded() {
+//     console.log('loaded test pix2pix');
+// }
 
-const pix2pix = ml5.pix2pix(pix2pixPath, modelLoaded);
-
-function modelLoaded() {
-    console.log('loaded test pix2pix');
-}
-
-// Face Detection Opts
+// Face Api
+var drawRate = 15; // FPS
+var tinyLmPath = chrome.extension.getURL('src/ml-models/tiny_lm.json');
+var tinyDetPath = chrome.extension.getURL('src/ml-models/tiny_det.json');
 const useTiny = true;
 const faceDetectOptions = new faceapi.TinyFaceDetectorOptions({
     inputSize: 512,
     scoreThreshold: 0.5
 });
+
+function drawLmLoop() {
+
+    setTimeout(drawLmLoop, 1000 / RATE)
+}
+
+inputVid
+    .addEventListener('play',
+        videoLoop.bind(videoLoop, drawCanvas, FPS)
+    , 0);
 
 // Face processing
 function process(inputVid, canvas) {
@@ -93,7 +108,3 @@ function videoLoop(canvas, fps=30) {
     })();
 }
 
-inputVid
-    .addEventListener('play',
-        videoLoop.bind(videoLoop, drawCanvas, FPS)
-    , 0);

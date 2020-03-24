@@ -7,34 +7,30 @@ docEl.appendChild(div);
 
 var getUserMediaOverload = document.createElement('script');
 getUserMediaOverload.textContent = "\
-var FPS;\
-var VIDEO_WIDTH;\
-var VIDEO_HEIGHT;\
-var PIX2PIX_SIZE = 256;\
+var FPS = 30;\
 var tinyLmPath = '" + chrome.extension.getURL('src/ml-models/tiny_lm.json') + "';\
 var tinyDetPath = '" + chrome.extension.getURL('src/ml-models/tiny_det.json') + "';\
-var pix2pixPath = '" + chrome.extension.getURL('src/ml-models/pix2pix.pict') + "';\
 const inputVid = document.querySelector('#inputVideo');\
+inputVid.style.display = 'none'; \
 const outCanvas = document.querySelector('#outCanvas');\
-outCanvas.height = PIX2PIX_SIZE; \
-outCanvas.width = PIX2PIX_SIZE; \
+outCanvas.style.display = 'none'; \
+const outContext = outCanvas.getContext('2d'); \
 const canvasStream = outCanvas.captureStream();\
 const getUserMedia = navigator.mediaDevices.getUserMedia;\
 navigator.mediaDevices.getUserMedia({  video: true }).then((stream) => {\
-    const videoTracks = stream.getVideoTracks();\
-    if (!videoTracks || !videoTracks.length) {\
-      return;\
-    } \
-    FPS = stream.getVideoTracks()[0].getSettings().frameRate; \
-    VIDEO_WIDTH = stream.getVideoTracks()[0].getSettings().height; \
-    VIDEO_HEIGHT = stream.getVideoTracks()[0].getSettings().width; \
-    inputVid.srcObject = stream; \
+  const videoTracks = stream.getVideoTracks();\
+  if (!videoTracks || !videoTracks.length) return; \
+  const track = stream.getVideoTracks()[0].getSettings(); \
+  FPS = track.frameRate; \
+  outCanvas.height = track.height; \
+  outCanvas.width = track.width; \
+  inputVid.srcObject = stream; \
+});\
+navigator.mediaDevices.getUserMedia = (args) => {\
+  return getUserMedia.bind(navigator.mediaDevices, args)().then((stream) => {\
+    return canvasStream;\
   });\
-  navigator.mediaDevices.getUserMedia = (args) => {\
-    return getUserMedia.bind(navigator.mediaDevices, args)().then((stream) => {\
-      return canvasStream;\
-    });\
-  };\
+};\
 ";
 docEl.appendChild(getUserMediaOverload);
 
@@ -52,12 +48,10 @@ function inject(scripts) {
   var otherScripts = scripts.slice(1);
   var el = (document.head || document.documentElement)
   el.appendChild(script);
-  // script.parentNode.removeChild(script); needed?
   inject(otherScripts);
 }
 
 inject([
   scriptFromFile("lib/face-api.min.js"),
-  scriptFromFile("lib/ml5.min.js"),
-  scriptFromFile("src/js/vid-processor.js")
+  scriptFromFile("src/js/filters/landmark.js")
 ]);
