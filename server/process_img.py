@@ -1,13 +1,14 @@
-import dlib
 import cv2
 import numpy as np
 import torch
 import yaml
+import face_alignment
 from scipy.spatial import ConvexHull
 from skimage.transform import resize
 from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from sync_batchnorm import DataParallelWithCallback
+from time import time
 
 
 def load_checkpoints(config_path, checkpoint_path):
@@ -34,11 +35,14 @@ def load_checkpoints(config_path, checkpoint_path):
 
 MODEL_CONFIG = './server/models/vox-256.yaml'
 MODEL_CKPT = './server/models/vox-cpk.pth.tar'
-FACE_DETECTOR = dlib.get_frontal_face_detector()
+FACE_DETECTOR = face_alignment.FaceAlignment(
+    face_alignment.LandmarksType._2D,
+    device='cuda',
+    face_detector='dlib')  # dlib
 GENERATOR, KP_DETECTOR = load_checkpoints(
     config_path=MODEL_CONFIG,
     checkpoint_path=MODEL_CKPT)
-DLIB_DOWNSAMPLE = 4
+DLIB_DOWNSAMPLE = 2
 TENSOR_SIZE = 256
 DEBUG = False
 
@@ -78,15 +82,17 @@ def fast_faces(img):
     """
         Fast face detector
     """
-    frame_resize = cv2.resize(
+    st = time()
+    img = cv2.resize(
         img, None, fx=1 / DLIB_DOWNSAMPLE, fy=1 / DLIB_DOWNSAMPLE)
-    gray = cv2.cvtColor(frame_resize, cv2.COLOR_BGR2GRAY)
-    faces = FACE_DETECTOR(gray, 1)
+    faces = FACE_DETECTOR.face_detector.detect_from_image(img)
+    print(f"face detect time: {np.round(time()-st, 2)}")
+
     if not faces:
         return []
     return [
         np.array([
-            face.left(), face.top(), face.right(), face.bottom()
+            face[0], face[1], face[2], face[3]
         ])*DLIB_DOWNSAMPLE for face in faces
     ]
 
@@ -132,14 +138,6 @@ def cutout_portrait(frame, portrait):
     return frame[f_top:f_bot, f_left:f_right]
 
 
-def tensor_from_img(img, portrait):
-    tensor = resize(
-        cutout_portrait(img, portrait),
-        (TENSOR_SIZE, TENSOR_SIZE), anti_aliasing=True)
-    tensor = tensor[np.newaxis].astype(np.float32)
-    return torch.tensor(tensor).permute(0, 3, 1, 2).cuda()
-
-
 def debug(img, fname='debug'):
     if DEBUG is True:
         cv2.imshow(fname, img)
@@ -167,8 +165,9 @@ def process(input_img_arr):
 
     images = []
     bboxes = []
+
     for idx, face in enumerate(sorted(faces, key=lambda f: f[0])):
-        (left, top, right, bot) = face
+        (left, top, right, bot) = (face[0], face[1], face[2], face[3])
         left_bound = int(idx*input_width/3)
         right_bound = int((idx+1)*input_width/3)
 
@@ -177,7 +176,7 @@ def process(input_img_arr):
             return None
 
         images.append(input_img_arr[:, left_bound:right_bound])
-        bboxes.append((left-left_bound, top, right-left_bound, bot))
+        bboxes.append((int(left-left_bound), int(top), int(right-left_bound), int(bot)))
 
     driving_img, driving_initial_img, source_img = images
     driving_bbox, driving_initial_bbox, source_bbox = bboxes
@@ -192,6 +191,13 @@ def process(input_img_arr):
         print("WARN: Portrait OOB!")
         print([driving_initial_portrait, driving_portrait, source_portrait])
         return None
+
+    def tensor_from_img(img, portrait):
+        tensor = resize(
+            cutout_portrait(img, portrait),
+            (TENSOR_SIZE, TENSOR_SIZE), anti_aliasing=False)
+        tensor = tensor[np.newaxis].astype(np.float32)
+        return torch.tensor(tensor).permute(0, 3, 1, 2).cuda()
 
     with torch.no_grad():
         source_tensor = tensor_from_img(source_img, source_portrait)
