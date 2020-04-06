@@ -10,11 +10,37 @@ from modules.keypoint_detector import KPDetector
 from sync_batchnorm import DataParallelWithCallback
 
 
-MODEL_CONFIG = './server/vox-256.yaml'
-MODEL_CKPT = './server/vox-cpk.pth.tar'
+def load_checkpoints(config_path, checkpoint_path):
+    """ LOAD ML MODELS """
+    with open(config_path) as f:
+        config = yaml.load(f)
+
+    generator = OcclusionAwareGenerator(
+        **config['model_params']['generator_params'],
+        **config['model_params']['common_params'])
+    generator.cuda()
+    kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
+                             **config['model_params']['common_params'])
+    kp_detector.cuda()
+    checkpoint = torch.load(checkpoint_path)
+    generator.load_state_dict(checkpoint['generator'])
+    kp_detector.load_state_dict(checkpoint['kp_detector'])
+    generator = DataParallelWithCallback(generator)
+    kp_detector = DataParallelWithCallback(kp_detector)
+    generator.eval()
+    kp_detector.eval()
+    return generator, kp_detector
+
+
+MODEL_CONFIG = './server/models/vox-256.yaml'
+MODEL_CKPT = './server/models/vox-cpk.pth.tar'
 FACE_DETECTOR = dlib.get_frontal_face_detector()
+GENERATOR, KP_DETECTOR = load_checkpoints(
+    config_path=MODEL_CONFIG,
+    checkpoint_path=MODEL_CKPT)
 DLIB_DOWNSAMPLE = 4
 TENSOR_SIZE = 256
+DEBUG = False
 
 
 def normalize_kp(kp_source, kp_driving, kp_driving_initial,
@@ -46,28 +72,6 @@ def normalize_kp(kp_source, kp_driving, kp_driving_initial,
                 jacobian_diff, kp_source['jacobian'])
 
     return kp_new
-
-
-def load_checkpoints(config_path, checkpoint_path):
-    """ LOAD ML MODELS """
-    with open(config_path) as f:
-        config = yaml.load(f)
-
-    generator = OcclusionAwareGenerator(
-        **config['model_params']['generator_params'],
-        **config['model_params']['common_params'])
-    generator.cuda()
-    kp_detector = KPDetector(**config['model_params']['kp_detector_params'],
-                             **config['model_params']['common_params'])
-    kp_detector.cuda()
-    checkpoint = torch.load(checkpoint_path)
-    generator.load_state_dict(checkpoint['generator'])
-    kp_detector.load_state_dict(checkpoint['kp_detector'])
-    generator = DataParallelWithCallback(generator)
-    kp_detector = DataParallelWithCallback(kp_detector)
-    generator.eval()
-    kp_detector.eval()
-    return generator, kp_detector
 
 
 def fast_faces(img):
@@ -136,66 +140,75 @@ def tensor_from_img(img, portrait):
     return torch.tensor(tensor).permute(0, 3, 1, 2).cuda()
 
 
-def process(img_bytes):
+def debug(img, fname='debug'):
+    if DEBUG is True:
+        cv2.imshow(fname, img)
+        cv2.imwrite(fname + ".jpg", img)
+        wk = cv2.waitKey(0)
+        if wk == ord('c'):
+            return
+        if wk == ord('q'):
+            quit()
+
+
+def process(input_img_arr):
     """
         Converts img from bytes, splits 50/50 with vertical line
         left half used as driving img, right half used as source
         images used to generate new face and returned
     """
-    nparr = np.fromstring(img_bytes, np.uint8)
-    img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    h, w, c = img_np.shape
-    faces = fast_faces(img_np)
+    input_height, input_width, input_channels = input_img_arr.shape
+    faces = fast_faces(input_img_arr)
+    debug(input_img_arr)
 
     if len(faces) != 3:
         print("INFO: Missing or too many faces!")
-        return
+        return None
 
     images = []
     bboxes = []
-    for idx, (left, top, right, bot) in enumerate(faces):
-        left_bound = int(idx*w/3)
-        right_bound = int((idx+1)*w/3)
-        images.append(img_np[:, left_bound:right_bound])
-        bboxes.append((left-left_bound, top, right-left_bound, bot))
+    for idx, face in enumerate(sorted(faces, key=lambda f: f[0])):
+        (left, top, right, bot) = face
+        left_bound = int(idx*input_width/3)
+        right_bound = int((idx+1)*input_width/3)
 
-        if left < left_bound or right < left_bound or left > right_bound \
-           or right > right_bound:
+        if left < left_bound or right > right_bound:
             print("WARN: Face OOB")
-            return
+            return None
+
+        images.append(input_img_arr[:, left_bound:right_bound])
+        bboxes.append((left-left_bound, top, right-left_bound, bot))
 
     driving_img, driving_initial_img, source_img = images
     driving_bbox, driving_initial_bbox, source_bbox = bboxes
     driving_initial_portrait = face_portrait(driving_initial_img,
                                              driving_initial_bbox)
     driving_portrait = face_portrait(driving_img, driving_bbox,
-                                     initial_portrait=driving_initial_bbox)
+                                     initial_portrait=driving_initial_portrait)
     source_portrait = face_portrait(source_img, source_bbox)
 
     if driving_initial_portrait is None or driving_portrait is None \
        or source_portrait is None:
         print("WARN: Portrait OOB!")
-        return
-
-    generator, kp_detector = load_checkpoints(
-        config_path=MODEL_CONFIG,
-        checkpoint_path=MODEL_CKPT)
+        print([driving_initial_portrait, driving_portrait, source_portrait])
+        return None
 
     with torch.no_grad():
         source_tensor = tensor_from_img(source_img, source_portrait)
-        kp_source = kp_detector(source_tensor)
+        kp_source = KP_DETECTOR(source_tensor)
         driving_tensor = tensor_from_img(driving_img, driving_portrait)
         driving_init_t = tensor_from_img(driving_initial_img,
                                          driving_initial_portrait)
         kp_norm = normalize_kp(kp_source=kp_source,
-                               kp_driving=kp_detector(driving_tensor),
-                               kp_driving_initial=kp_detector(driving_init_t),
+                               kp_driving=KP_DETECTOR(driving_tensor),
+                               kp_driving_initial=KP_DETECTOR(driving_init_t),
                                use_relative_movement=True,
                                use_relative_jacobian=True,
                                adapt_movement_scale=True)
-        out = generator(source_tensor, kp_source=kp_source, kp_driving=kp_norm)
+        out = GENERATOR(source_tensor, kp_source=kp_source, kp_driving=kp_norm)
         out = out['prediction'].data.cpu().numpy()
         out_img = np.transpose(out, [0, 2, 3, 1])[0]*255
-        cv2.imshow('final', out_img)
-        wk = cv2.waitKey(1)
-        return wk
+
+    debug(out_img/255, 'out')
+    sz = min(input_height, input_height)
+    return resize(out_img, (sz, sz))

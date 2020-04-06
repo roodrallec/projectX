@@ -14,6 +14,7 @@ getUserMediaOverload.textContent = "\
 var FPS = 30;\
 var TINY_LM = '" + chrome.extension.getURL('src/ml-models/tiny_lm.json') + "';\
 var TINY_DET = '" + chrome.extension.getURL('src/ml-models/tiny_det.json') + "';\
+var SRC_IMG_URL = '"+ chrome.extension.getURL('src/images/face.png') + "';\
 const inputVid = document.querySelector('#inputVideo');\
 const outCanvas = document.querySelector('#outCanvas');\
 const outContext = outCanvas.getContext('2d'); \
@@ -58,7 +59,6 @@ function inject(scripts) {
 }
 
 inject([
-  scriptFromFile("lib/concatenate-blobs.js"),
   scriptFromFile("src/js/filters/sockets.js"),
   // scriptFromFile("src/js/filters/landmark.js")
 ]);

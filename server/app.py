@@ -3,13 +3,10 @@ import tornado.websocket
 import tornado.ioloop
 import tornado.web
 import socket
+import numpy as np
+import cv2
 from process_img import process
-'''
-This is a simple Websocket Echo server that uses the Tornado websocket handler.
-Please run `pip install tornado` with python of version 2.7.9 or greater to install tornado.
-This program will echo back the reverse of whatever it recieves.
-Messages are output to the terminal for debuggin purposes.
-'''
+from time import time
 
 
 class WSHandler(tornado.websocket.WebSocketHandler):
@@ -18,8 +15,16 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 
     def on_message(self, message):
         print('message received')
-        result = process(message)
-        self.write_message(result, binary=True)
+        nparr = np.fromstring(message, np.uint8)
+        img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        st = time()
+        result = process(img_np)
+        print(f"FPS: {int(1/(time() - st))}")
+        if result is not None:
+            success, encoded_image = cv2.imencode('.png', result)
+            self.write_message(encoded_image.tobytes(), binary=True)
+        else:
+            self.write_message(b'', binary=True)
 
     def on_close(self):
         print('connection closed')
