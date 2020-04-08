@@ -3,10 +3,23 @@ import tornado.websocket
 import tornado.ioloop
 import tornado.web
 import socket
-import numpy as np
-import cv2
-from process_img import process
+import json
+import uuid
+from .process_img import process
 from time import time
+
+frames = {}
+
+
+class Frame():
+
+    def __init__(self, client_id):
+        self.client_id = client_id
+        self.driving_img = None
+        self.initial_img = None
+        self.inital_bbox = None
+        self.source_img = None
+        self.output_img = None
 
 
 class WSHandler(tornado.websocket.WebSocketHandler):
@@ -15,16 +28,18 @@ class WSHandler(tornado.websocket.WebSocketHandler):
 
     def on_message(self, message):
         print('message received')
-        nparr = np.fromstring(message, np.uint8)
-        img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        json_dict = json.loads(message)
+        client_id = json_dict.get('client_id', uuid.uuid4())
+        frame = frames.get(client_id, Frame(client_id))
+        frame.driving_img = json_dict.get('driving_img')
         st = time()
-        result = process(img_np)
-        print(f"FPS: {int(1/(time() - st))}")
-        if result is not None:
-            success, encoded_image = cv2.imencode('.png', result)
-            self.write_message(encoded_image.tobytes(), binary=True)
-        else:
-            self.write_message(b'', binary=True)
+        process(frame)
+        frames[frame.client_id] = frame
+        print(f"FPS {1/(time()-st)}")
+        self.write_message(json.dumps({
+            "client_id": self.client_id,
+            "output_img": self.output_img
+        }))
 
     def on_close(self):
         print('connection closed')
