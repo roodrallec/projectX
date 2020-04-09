@@ -9,6 +9,7 @@ from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from sync_batchnorm import DataParallelWithCallback
 from time import time
+from errors import MissingDrivingImage, PortraitOOB
 
 
 class Frame():
@@ -104,12 +105,12 @@ def fast_faces(img):
     ]
 
 
-def face_portrait(frame, face_bbox, initial_portrait=None):
+def face_portrait(img, face_bbox, initial_portrait=None):
     """
-        Return portrait capturing bbox face from frame and cutout from frame
+        Return portrait capturing bbox face from img and cutout from img
     """
     if initial_portrait is None:
-        b_left, b_top, b_right, b_bot = (0, 0, frame.shape[1], frame.shape[0])
+        b_left, b_top, b_right, b_bot = (0, 0, img.shape[1], img.shape[0])
         initial_portrait = portrait(face_bbox)
         f_left, f_top, f_right, f_bot = initial_portrait
     else:
@@ -117,7 +118,7 @@ def face_portrait(frame, face_bbox, initial_portrait=None):
         f_left, f_top, f_right, f_bot = face_bbox
 
     if f_left < b_left or f_top < b_top or f_bot > b_bot or f_right > b_right:
-        raise Exception('Portrait OOB!')
+        raise PortraitOOB('Portrait OOB!')
 
     return initial_portrait
 
@@ -139,9 +140,9 @@ def portrait(face_bbox):
     return int(x), int(y), int(x_end), int(y_end)
 
 
-def cutout_portrait(frame, portrait):
+def cutout_portrait(img, portrait):
     f_left, f_top, f_right, f_bot = portrait
-    return frame[f_top:f_bot, f_left:f_right]
+    return img[f_top:f_bot, f_left:f_right]
 
 
 def debug(img, fname='debug'):
@@ -155,57 +156,60 @@ def debug(img, fname='debug'):
             quit()
 
 
-def load_source_img():
-    return cv2.imread('faceC.jpg')
+def load_source_tensor():
+    src_img = cv2.imread('faceC.jpg')
+    source_bbox = fast_faces(src_img)[0]
+    source_portrait = face_portrait(src_img, source_bbox)
+    source_tensor = resize(cutout_portrait(src_img, source_portrait),
+                           (TENSOR_SIZE, TENSOR_SIZE))
+    return source_tensor[np.newaxis].astype(np.float32)
 
 
 def process(driving_image, frame):
     """
         images used to generate new face and returned
     """
-    if not driving_image:
-        raise Exception('Missing driving image')
+    if driving_image is None:
+        raise MissingDrivingImage('Missing driving image')
+    debug(driving_image, 'driving')
 
-    driving_face = fast_faces(driving_image)[0]
-    if not driving_face:
+    driving_faces = fast_faces(driving_image)
+    if len(driving_faces) == 0:
         raise Exception('Missing or wrong number of driving faces')
+    driving_face = driving_faces[0]
 
     if not frame.source_tensor:
-        src_img = load_source_img()
-        source_bbox = fast_faces(src_img)[0]
-        source_portrait = face_portrait(src_img, source_bbox)
-        source_tensor = resize(cutout_portrait(src_img, source_portrait),
-                               (TENSOR_SIZE, TENSOR_SIZE))
-        frame.source_tensor = source_tensor[np.newaxis].astype(np.float32)
+        frame.source_tensor = load_source_tensor()
 
     if not frame.initial_tensor:
-        frame.initial_portrait = face_portrait(driving_image,
-                                               driving_face)
-        initial_tensor = resize(cutout_portrait(driving_image,
-                                                frame.initial_portrait),
-                                (TENSOR_SIZE, TENSOR_SIZE))
+        frame.initial_portrait = face_portrait(driving_image, driving_face)
+        initial_tensor = resize(cutout_portrait(
+            driving_image, frame.initial_portrait), (TENSOR_SIZE, TENSOR_SIZE))
         frame.initial_tensor = initial_tensor[np.newaxis].astype(np.float32)
 
-    driving_portrait = face_portrait(driving_image, driving_face,
-                                     initial_portrait=frame.initial_portrait)
-    driving_tensor = resize(cutout_portrait(driving_image,
-                                            driving_portrait),
-                            (TENSOR_SIZE, TENSOR_SIZE))
+    driving_portrait = face_portrait(
+        driving_image, driving_face, initial_portrait=frame.initial_portrait)
+    driving_tensor = resize(cutout_portrait(
+        driving_image, driving_portrait), (TENSOR_SIZE, TENSOR_SIZE))
+    driving_tensor = driving_tensor[np.newaxis].astype(np.float32)
 
     with torch.no_grad():
         source_tensor = torch.tensor(
-            frame.source_img).permute(0, 3, 1, 2).cuda()
+            frame.source_tensor).permute(0, 3, 1, 2).cuda()
+        driving_tensor = torch.tensor(
+            driving_tensor).permute(0, 3, 1, 2).cuda()
+        initial_tensor = torch.tensor(
+            frame.initial_tensor).permute(0, 3, 1, 2).cuda()
         kp_source = KP_DETECTOR(source_tensor)
         kp_norm = normalize_kp(
             kp_source=kp_source,
             kp_driving=KP_DETECTOR(driving_tensor),
-            kp_driving_initial=KP_DETECTOR(frame.initial_tensor),
+            kp_driving_initial=KP_DETECTOR(initial_tensor),
             use_relative_movement=True,
             use_relative_jacobian=True,
             adapt_movement_scale=True)
         out = GENERATOR(source_tensor, kp_source=kp_source, kp_driving=kp_norm)
         out = out['prediction'].data.cpu().numpy()
         out_img = np.transpose(out, [0, 2, 3, 1])[0]*255
-
     debug(out_img/255, 'out')
     return out_img, frame

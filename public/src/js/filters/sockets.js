@@ -10,21 +10,31 @@ const payload = {
   driving_img: null,
 };
 function sendToServer() {
-  offscreenCtx.drawImage(
-    inputVid,
-    0,
-    0,
-    inputVid.videoWidth,
-    inputVid.videoHeight,
-    0,
-    0,
-    offscreen.width,
-    offscreen.height
-  );
-  payload.driving_img = await offscreen.convertToBlob();
-  var json_s = JSON.stringify(payload);
-  console.log("Sending to server", json_s);
-  socket.send(json_s);
+  if (inputVid.videoWidth > 0) {
+    offscreenCtx.drawImage(
+        inputVid,
+        0,
+        0,
+        inputVid.videoWidth,
+        inputVid.videoHeight,
+        0,
+        0,
+        offscreen.width,
+        offscreen.height
+    );
+    return offscreen.convertToBlob().then((blob) => {
+        var reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = function() {
+            payload.driving_img = reader.result.split(',')[1];
+            console.log("Sending to server", payload);
+            var encoded = btoa(JSON.stringify(payload));
+            socket.send(encoded);
+        }
+    });
+  } else {
+    return setTimeout(sendToServer, 1000);
+  }
 }
 function onSocketMessage(msg) {
   console.log("Msg received ", msg.data);
@@ -37,6 +47,7 @@ function onSocketMessage(msg) {
     };
     img.src = msg.output_img;
   }
+  if (msg.error) console.error(msg.error);
   sendToServer();
 }
 socket.onopen = sendToServer;
