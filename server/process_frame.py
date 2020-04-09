@@ -3,13 +3,15 @@ import numpy as np
 import torch
 import yaml
 import face_alignment
+import requests
+import os
 from scipy.spatial import ConvexHull
 from skimage.transform import resize
 from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from sync_batchnorm import DataParallelWithCallback
 from time import time
-from errors import MissingDrivingImage, PortraitOOB
+from errors import MissingDrivingImage, PortraitOOB, MissingDrivingFace
 
 
 class Frame():
@@ -18,6 +20,7 @@ class Frame():
         self.initial_portrait = None
         self.initial_tensor = None
         self.source_tensor = None
+        self.src_img_path = client_id
 
 
 def load_checkpoints(config_path, checkpoint_path):
@@ -44,6 +47,7 @@ def load_checkpoints(config_path, checkpoint_path):
 
 MODEL_CONFIG = './server/models/vox-256.yaml'
 MODEL_CKPT = './server/models/vox-cpk.pth.tar'
+SRC_IMG_URL = 'https://thispersondoesnotexist.com/image'
 FACE_DETECTOR = face_alignment.FaceAlignment(
     face_alignment.LandmarksType._2D,
     device='cuda')
@@ -105,22 +109,41 @@ def fast_faces(img):
     ]
 
 
-def face_portrait(img, face_bbox, initial_portrait=None):
-    """
-        Return portrait capturing bbox face from img and cutout from img
-    """
-    if initial_portrait is None:
-        b_left, b_top, b_right, b_bot = (0, 0, img.shape[1], img.shape[0])
-        initial_portrait = portrait(face_bbox)
-        f_left, f_top, f_right, f_bot = initial_portrait
+def face_portrait(img, tube_bbox, increase_area=0.1):
+    frame_shape = img.shape
+    left, top, right, bot = tube_bbox
+    width = right - left
+    height = bot - top
+    width_increase = max(
+        increase_area, ((1+2*increase_area) * height-width) / (2 * width))
+    height_increase = max(
+        increase_area, ((1+2*increase_area) * width-height) / (2 * height))
+    left = int(left - width_increase * width)
+    top = int(top - height_increase * height)
+    right = int(right + width_increase * width)
+    bot = int(bot + height_increase * height)
+    top, bot, left, right = max(0, top), min(
+        bot, frame_shape[0]), max(0, left), min(right, frame_shape[1])
+    return left, top, right, bot
+
+
+def bb_intersection_over_union(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+    return iou
+
+
+def valid_bbox(bboxA, bboxB, iou_thresh=0.25):
+    if bb_intersection_over_union(bboxA, bboxB) > iou_thresh:
+        return True
     else:
-        b_left, b_top, b_right, b_bot = initial_portrait
-        f_left, f_top, f_right, f_bot = face_bbox
-
-    if f_left < b_left or f_top < b_top or f_bot > b_bot or f_right > b_right:
-        raise PortraitOOB('Portrait OOB!')
-
-    return initial_portrait
+        return False
 
 
 def portrait(face_bbox):
@@ -156,13 +179,32 @@ def debug(img, fname='debug'):
             quit()
 
 
-def load_source_tensor():
-    src_img = cv2.imread('faceC.jpg')
-    source_bbox = fast_faces(src_img)[0]
-    source_portrait = face_portrait(src_img, source_bbox)
-    source_tensor = resize(cutout_portrait(src_img, source_portrait),
-                           (TENSOR_SIZE, TENSOR_SIZE))
-    return source_tensor[np.newaxis].astype(np.float32)
+def download_source(save_name):
+    r = requests.get(SRC_IMG_URL, headers={'User-Agent': 'My User Agent 1.0'})
+    with open(save_name, 'wb') as f:
+        f.write(r.content)
+
+
+def load_source_tensor(src_img_name):
+    if not os.path.isfile(src_img_name):
+        download_source(src_img_name)
+
+    src_img = cv2.imread(src_img_name)
+    src_border = 200
+    source_portrait = None
+    src_img = cv2.copyMakeBorder(
+        src_img, src_border, src_border, src_border, src_border,
+        cv2.BORDER_CONSTANT, value=[0, 0, 0])
+    faces = fast_faces(src_img)
+
+    if not faces or len(faces) == 0:
+        raise Exception('Missing face in source')
+
+    source_portrait = face_portrait(src_img, faces[0])
+    src_tensor = resize(cutout_portrait(src_img, source_portrait),
+                        (TENSOR_SIZE, TENSOR_SIZE))
+
+    return src_tensor[np.newaxis].astype(np.float32)
 
 
 def process(driving_image, frame):
@@ -175,20 +217,23 @@ def process(driving_image, frame):
 
     driving_faces = fast_faces(driving_image)
     if len(driving_faces) == 0:
-        raise Exception('Missing or wrong number of driving faces')
+        raise MissingDrivingFace('Missing or wrong number of driving faces')
     driving_face = driving_faces[0]
 
-    if not frame.source_tensor:
-        frame.source_tensor = load_source_tensor()
+    if frame.source_tensor is None:
+        frame.source_tensor = load_source_tensor(frame.src_img_path)
 
-    if not frame.initial_tensor:
+    if frame.initial_tensor is None:
         frame.initial_portrait = face_portrait(driving_image, driving_face)
         initial_tensor = resize(cutout_portrait(
             driving_image, frame.initial_portrait), (TENSOR_SIZE, TENSOR_SIZE))
         frame.initial_tensor = initial_tensor[np.newaxis].astype(np.float32)
 
-    driving_portrait = face_portrait(
-        driving_image, driving_face, initial_portrait=frame.initial_portrait)
+    driving_portrait = face_portrait(driving_image, driving_face)
+
+    if not valid_bbox(driving_portrait, frame.initial_portrait):
+        raise PortraitOOB('Portrait OOB!')
+
     driving_tensor = resize(cutout_portrait(
         driving_image, driving_portrait), (TENSOR_SIZE, TENSOR_SIZE))
     driving_tensor = driving_tensor[np.newaxis].astype(np.float32)
@@ -211,5 +256,5 @@ def process(driving_image, frame):
         out = GENERATOR(source_tensor, kp_source=kp_source, kp_driving=kp_norm)
         out = out['prediction'].data.cpu().numpy()
         out_img = np.transpose(out, [0, 2, 3, 1])[0]*255
-    debug(out_img/255, 'out')
-    return out_img, frame
+        debug(out_img/255, 'out')
+    return out_img.astype(np.uint8), frame

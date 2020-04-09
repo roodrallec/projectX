@@ -31,7 +31,7 @@
   "content_scripts": [
     {
       "matches": [
-        "file:///*/test.html",
+        "https://*/test.html",
         "https://zoom.us/*",
         "https://web.skype.com/*",
         "https://whereby.com/*",
