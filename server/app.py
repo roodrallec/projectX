@@ -9,6 +9,7 @@ import base64
 import numpy as np
 import cv2
 import os
+from time import time
 from process_frame import process, Frame
 from errors import PortraitOOB, MissingDrivingFace
 
@@ -35,8 +36,10 @@ class WSHandler(tornado.websocket.WebSocketHandler):
         nparr = np.fromstring(blob, np.uint8)
         driving_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         try:
+            st = time()
             out_img, frame = process(driving_img,
                                      frames.get(client_id, Frame(client_id)))
+            print(f"Process fps: {int(1/(time()-st))}")
             frames[client_id] = frame
             success, encoded_image = cv2.imencode('.png', out_img)
             self.write_message(json.dumps({
