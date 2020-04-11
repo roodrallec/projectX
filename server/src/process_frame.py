@@ -6,17 +6,13 @@ import face_alignment
 import requests
 import os
 from scipy.spatial import ConvexHull
-from skimage.transform import resize
 from modules.generator import OcclusionAwareGenerator
 from modules.keypoint_detector import KPDetector
 from sync_batchnorm import DataParallelWithCallback
-from time import time
 from errors import MissingDrivingImage, PortraitOOB, MissingDrivingFace
 
 
-DLIB_DOWNSAMPLE = 4
 TENSOR_SIZE = 256
-DEBUG = False
 SRC_IMG_URL = os.environ.get(
     'SRC_IMG_URL', 'https://thispersondoesnotexist.com/image')
 MODEL_CFG = os.environ.get('MODEL_CFG', 'models/vox-256.yaml')
@@ -93,26 +89,9 @@ class FrameProcessor():
 
         return kp_new
 
-    def fast_faces(self, img):
-        """
-            Fast face detector
-        """
-        st = time()
-        img = cv2.resize(img, None, fx=1 / DLIB_DOWNSAMPLE,
-                         fy=1 / DLIB_DOWNSAMPLE)
-        faces = self.fa.face_detector.detect_from_image(img)
-        print(f"face detect time: {np.round(time()-st, 2)}")
-        if not faces:
-            return []
-        return [
-            np.array([
-                face[0], face[1], face[2], face[3]
-            ])*DLIB_DOWNSAMPLE for face in faces
-        ]
-
     def face_portrait(self, img, tube_bbox, increase_area=0.1):
         frame_shape = img.shape
-        left, top, right, bot = tube_bbox
+        left, top, right, bot, _ = tube_bbox
         width = right - left
         height = bot - top
         width_increase = max(
@@ -148,16 +127,6 @@ class FrameProcessor():
         f_left, f_top, f_right, f_bot = portrait
         return img[f_top:f_bot, f_left:f_right]
 
-    def debug(self, img, fname='debug'):
-        if DEBUG is True:
-            cv2.imshow(fname, img)
-            cv2.imwrite(fname + ".jpg", img)
-            wk = cv2.waitKey(0)
-            if wk == ord('c'):
-                return
-            if wk == ord('q'):
-                quit()
-
     def download_source(self, save_name):
         r = requests.get(SRC_IMG_URL, headers={
                          'User-Agent': 'My User Agent 1.0'})
@@ -174,14 +143,14 @@ class FrameProcessor():
         src_img = cv2.copyMakeBorder(
             src_img, src_border, src_border, src_border, src_border,
             cv2.BORDER_CONSTANT, value=[0, 0, 0])
-        faces = self.fast_faces(src_img)
+        faces = self.fa.face_detector.detect_from_image(src_img)
 
         if not faces or len(faces) == 0:
             raise Exception('Missing face in source')
 
         source_portrait = self.face_portrait(src_img, faces[0])
-        src_tensor = resize(self.cutout_portrait(src_img, source_portrait),
-                            (TENSOR_SIZE, TENSOR_SIZE))
+        src_tensor = cv2.resize(self.cutout_portrait(src_img, source_portrait),
+                                (TENSOR_SIZE, TENSOR_SIZE))/255
 
         return src_tensor[np.newaxis].astype(np.float32)
 
@@ -192,11 +161,6 @@ class FrameProcessor():
         with torch.no_grad():
             if driving_image is None:
                 raise MissingDrivingImage('Missing driving image')
-            driving_faces = self.fast_faces(driving_image)
-            if len(driving_faces) == 0:
-                raise MissingDrivingFace(
-                    'Missing or wrong number of driving faces')
-            driving_face = driving_faces[0]
 
             if frame.source_tensor is None:
                 frame.source_tensor = self.load_source_tensor(
@@ -206,27 +170,37 @@ class FrameProcessor():
                 frame.kp_source = self.kp_detector(frame.source_tensor)
 
             if frame.initial_tensor is None:
-                frame.initial_portrait = self.face_portrait(
-                    driving_image, driving_face)
-                initial_tensor = resize(self.cutout_portrait(
-                    driving_image, frame.initial_portrait),
-                    (TENSOR_SIZE, TENSOR_SIZE))
+                initial_img = driving_image
+                faces = self.fa.face_detector.detect_from_image(initial_img)
+
+                if len(faces) == 0:
+                    raise MissingDrivingFace('Missing face')
+
+                face = faces[0]
+                frame.initial_portrait = self.face_portrait(initial_img, face)
+                cutout = self.cutout_portrait(
+                    initial_img, frame.initial_portrait)
+                initial_tensor = cv2.resize(
+                    cutout, (TENSOR_SIZE, TENSOR_SIZE))/255
                 frame.initial_tensor = torch.tensor(
                     initial_tensor[np.newaxis].astype(np.float32)
                 ).permute(0, 3, 1, 2).cuda()
                 frame.initial_kp = self.kp_detector(frame.initial_tensor)
 
-            driving_portrait = self.face_portrait(driving_image, driving_face)
-
-            if not self.valid_bbox(driving_portrait, frame.initial_portrait):
-                raise PortraitOOB('Portrait OOB!')
+            # Following too slow to do in realtime (maybe once every x frames)?
+            #  driving_faces = self.fa.face_detector.detect_from_image(driving_image)
+            #  driving_portrait = self.face_portrait(driving_image, driving_faces[0])
+            # if not self.valid_bbox(driving_portrait, frame.initial_portrait):
+            #     raise PortraitOOB('Portrait OOB!')
 
             driving_cutout = self.cutout_portrait(
-                driving_image, driving_portrait)
-            driving_tensor = resize(driving_cutout, (TENSOR_SIZE, TENSOR_SIZE))
+                driving_image, frame.initial_portrait)
+            driving_tensor = cv2.resize(
+                driving_cutout, (TENSOR_SIZE, TENSOR_SIZE))/255
             driving_tensor = driving_tensor[np.newaxis].astype(np.float32)
             driving_tensor = torch.tensor(
                 driving_tensor).permute(0, 3, 1, 2).cuda()
+
             kp_norm = self.normalize_kp(
                 kp_source=frame.kp_source,
                 kp_driving=self.kp_detector(driving_tensor),
