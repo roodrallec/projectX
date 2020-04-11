@@ -2,11 +2,11 @@
     Opens a websocket connection and streams cam to backend
     for filter application.
 */
-const socket = new WebSocket("wss://192.168.1.131:8888/ws");
+const socket = new WebSocket("wss://localhost:8888/ws");
 const offscreen = new OffscreenCanvas(256, 256);
 const offscreenCtx = offscreen.getContext("2d");
 const payload = {
-  client_id: null,
+  client_id: 'test-client',
   driving_img: null,
 };
 var fpsSt = new Date().getTime();
@@ -60,8 +60,11 @@ function onSocketMessage(msg) {
     };
     img.src = "data:image/png;base64," + msg.output_img;
   }
-  if (msg.error) console.warn(msg.error);
-  sendToServer();
+  if (msg.error) {
+    setTimeout(sendToServer, 3000);
+  } else {
+    sendToServer();
+  }
 }
 socket.onopen = sendToServer;
 socket.onmessage = onSocketMessage;

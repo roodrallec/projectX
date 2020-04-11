@@ -1,0 +1,17 @@
+additional_properties: {}
+apiVersion: '2018-10-01'
+name: gpucontainergroup
+properties:
+  containers:
+  - name: gpucontainer
+    properties:
+      image: face-gen:latest
+      resources:
+        requests:
+          cpu: 1.0
+          memoryInGB: 1.5
+          gpu:
+            count: 1
+            sku: K80
+  osType: Linux
+  restartPolicy: OnFailure
